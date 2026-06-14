@@ -72,9 +72,31 @@
 
 ## Quick start
 
-This repo ships a `run.sh` that auto-detects where it's running (Termux on phone vs Mac/Linux computer) and does the right thing. Two manual prereqs you can't avoid (Android restrictions), then it's one command per device.
+**Easiest: pipe install.sh straight from GitHub** (recommended once you've reviewed [what it does](https://github.com/sulthonzh/android-docker-qemu/blob/main/install.sh)):
 
-### Prerequisites (manual, ~5 minutes)
+```bash
+# Run this on BOTH your phone (inside Termux) and your computer (Mac/Linux).
+# The installer auto-detects which device it's on and does the right thing.
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh | bash
+```
+
+**Safer: download and review first** (recommended for first-time users):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh -o install.sh
+less install.sh                # audit it
+bash install.sh                # then run it
+```
+
+**Or: clone the repo manually** (if you want to keep a local copy for inspection/contribution):
+
+```bash
+git clone https://github.com/sulthonzh/android-docker-qemu
+cd android-docker-qemu
+./install.sh                   # or ./run.sh, same thing minus the auto-download
+```
+
+### Prerequisites (manual, ~5 minutes — Android restrictions make these unavoidable)
 
 On your phone:
 
@@ -83,47 +105,31 @@ On your phone:
 3. Open Termux and run:
    ```bash
    termux-setup-storage    # tap "Allow" on the Android dialog
-   pkg update && pkg install -y git
+   pkg update && pkg install -y git curl
    ```
 
 On your computer: install Docker ([Docker Desktop](https://www.docker.com/products/docker-desktop/), [Colima](https://github.com/abiosoft/colima), or [OrbStack](https://orbstack.dev/) on Mac; `docker.io` on Linux) and generate an SSH key (`ssh-keygen -t ed25519`).
 
-### Setup (one command per device)
+### What happens after you run the installer
 
-**On the phone** (inside Termux):
-
-```bash
-git clone https://github.com/sulthonzh/android-docker-qemu
-cd android-docker-qemu
-./run.sh
-```
-
-`run.sh` detects Termux and runs `setup-phone.sh`. It will:
-- Install QEMU and dependencies (~2 min)
-- Download + resize the Debian 12 cloud image (~5 min)
-- Build the cloud-init seed with your SSH key (prompts for GitHub username, or paste)
-- Install the QEMU launcher + boot scripts
-- Start the VM
-- Print the phone's IP address
+**On the phone** (Termux auto-detected): installer hands off to `setup-phone.sh`, which:
+- Installs QEMU and dependencies (~2 min)
+- Downloads + resizes the Debian 12 cloud image (~5 min)
+- Builds the cloud-init seed with your SSH key (prompts for GitHub username, or paste)
+- Installs the QEMU launcher + boot scripts
+- Starts the VM
+- Prints the phone's IP address
 
 The VM then boots for **20–30 minutes** (TCG software emulation — fundamental limitation).
 
-**On your computer** (Mac or Linux):
+**On your computer** (Mac/Linux auto-detected): installer hands off to `setup-computer.sh`, which:
+- Installs the `phone-*` helper scripts to `~/.local/bin/`
+- Adds `phone-vm` and `phone-termux` entries to `~/.ssh/config`
+- Copies your SSH public key to Termux (so you can manage the phone)
+- Creates a Docker context named `phone` pointing at the VM via SSH
+- Runs a connectivity test
 
-```bash
-git clone https://github.com/sulthonzh/android-docker-qemu
-cd android-docker-qemu
-./run.sh
-```
-
-`run.sh` detects Mac/Linux and runs `setup-computer.sh`. It will:
-- Install the `phone-*` helper scripts to `~/.local/bin/`
-- Add `phone-vm` and `phone-termux` entries to `~/.ssh/config`
-- Copy your SSH public key to Termux (so you can manage the phone)
-- Create a Docker context named `phone` pointing at the VM via SSH
-- Run a connectivity test
-
-**Day-to-day usage:**
+### Day-to-day usage
 
 ```bash
 phone-healthcheck                  # full end-to-end health check
@@ -141,13 +147,20 @@ docker --context phone compose -f docker/docker-compose.example.yml up -d
 
 ```bash
 # Phone: fetch SSH key from GitHub, no prompts
-./run.sh --github your-github-username
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh \
+  | bash -s -- --github your-github-username
 
 # Computer: provide phone IP directly, no prompts
-./run.sh --phone-ip 192.168.0.9
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh \
+  | bash -s -- --phone-ip 192.168.0.9
 
 # Either: preview without changes
-./run.sh --dry-run
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh \
+  | bash -s -- --dry-run
+
+# Either: keep the extracted repo instead of cleaning up
+curl -fsSL https://raw.githubusercontent.com/sulthonzh/android-docker-qemu/main/install.sh \
+  | bash -s -- --keep
 ```
 
 ---
@@ -156,10 +169,12 @@ docker --context phone compose -f docker/docker-compose.example.yml up -d
 
 ```
 .
-├── run.sh                       One entry point — detects phone vs computer, dispatches
+├── install.sh                   curl-pipeable installer (download + extract + dispatch)
+├── run.sh                       Local entry point — detects phone vs computer, dispatches
 ├── setup-phone.sh               Phone setup (runs inside Termux)
 ├── setup-computer.sh            Computer setup (Mac/Linux)
 ├── README.md                    You are here
+├── SECURITY.md                  What the scripts do/don't do (audit reference)
 ├── PLAYBOOK.md                  The full 1500-line engineering playbook (deep dive)
 ├── termux/                      Files that install ON THE PHONE (Termux side)
 │   ├── boot-debian-mon.sh       QEMU launcher script
