@@ -72,31 +72,83 @@
 
 ## Quick start
 
-The tutorial walks through every command in detail. The short version:
+This repo ships a `run.sh` that auto-detects where it's running (Termux on phone vs Mac/Linux computer) and does the right thing. Two manual prereqs you can't avoid (Android restrictions), then it's one command per device.
+
+### Prerequisites (manual, ~5 minutes)
+
+On your phone:
+
+1. **Install Termux** from [F-Droid](https://f-droid.org/packages/com.termux/) (NOT the Play Store version — it's deprecated and broken)
+2. **Install Termux:Boot** from [F-Droid](https://f-droid.org/packages/com.termux.boot/), then **open it once** (this registers the BOOT_COMPLETED receiver — Android requires the manual open)
+3. Open Termux and run:
+   ```bash
+   termux-setup-storage    # tap "Allow" on the Android dialog
+   pkg update && pkg install -y git
+   ```
+
+On your computer: install Docker ([Docker Desktop](https://www.docker.com/products/docker-desktop/), [Colima](https://github.com/abiosoft/colima), or [OrbStack](https://orbstack.dev/) on Mac; `docker.io` on Linux) and generate an SSH key (`ssh-keygen -t ed25519`).
+
+### Setup (one command per device)
+
+**On the phone** (inside Termux):
 
 ```bash
-# 1. On the phone (inside Termux): install QEMU, download Debian cloud image,
-#    build the cloud-init seed, install the boot scripts from this repo's termux/ folder.
-#    → See: termux/ directory
-
-# 2. On your computer: clone this repo, install the Mac helper scripts.
-git clone https://github.com/sulthonzh/android-docker-qemu.git
+git clone https://github.com/sulthonzh/android-docker-qemu
 cd android-docker-qemu
-cp mac/phone-* ~/.local/bin/ && chmod +x ~/.local/bin/phone-*
+./run.sh
+```
 
-# 3. Create a Docker context that points at the phone (via SSH).
-docker context create phone \
-  --docker "host=ssh://sulthon@$(PHONE_IP):2222"
+`run.sh` detects Termux and runs `setup-phone.sh`. It will:
+- Install QEMU and dependencies (~2 min)
+- Download + resize the Debian 12 cloud image (~5 min)
+- Build the cloud-init seed with your SSH key (prompts for GitHub username, or paste)
+- Install the QEMU launcher + boot scripts
+- Start the VM
+- Print the phone's IP address
 
-# 4. Use it like local Docker.
+The VM then boots for **20–30 minutes** (TCG software emulation — fundamental limitation).
+
+**On your computer** (Mac or Linux):
+
+```bash
+git clone https://github.com/sulthonzh/android-docker-qemu
+cd android-docker-qemu
+./run.sh
+```
+
+`run.sh` detects Mac/Linux and runs `setup-computer.sh`. It will:
+- Install the `phone-*` helper scripts to `~/.local/bin/`
+- Add `phone-vm` and `phone-termux` entries to `~/.ssh/config`
+- Copy your SSH public key to Termux (so you can manage the phone)
+- Create a Docker context named `phone` pointing at the VM via SSH
+- Run a connectivity test
+
+**Day-to-day usage:**
+
+```bash
+phone-healthcheck                  # full end-to-end health check
+phone-status                       # quick human-readable state summary
+phone-vm-start --wait              # start VM if not running, wait until ready
+phone-vm-stop                      # graceful ACPI shutdown
+
 docker --context phone run --rm hello-world
 docker --context phone compose -f docker/docker-compose.example.yml up -d
-
-# 5. Verify everything is healthy.
-phone-healthcheck
 ```
 
 📖 **Read the full tutorial for the why behind every step** → https://dev.to/sulthonzh/run-real-docker-on-android-no-root-no-tricks-just-qemu-15jn
+
+### Non-interactive usage (for scripts / CI)
+
+```bash
+# Phone: fetch SSH key from GitHub, no prompts
+./run.sh --github your-github-username
+
+# Computer: provide phone IP directly, no prompts
+./run.sh --phone-ip 192.168.0.9
+
+# Either: preview without changes
+./run.sh --dry-run
+```
 
 ---
 
@@ -104,6 +156,9 @@ phone-healthcheck
 
 ```
 .
+├── run.sh                       One entry point — detects phone vs computer, dispatches
+├── setup-phone.sh               Phone setup (runs inside Termux)
+├── setup-computer.sh            Computer setup (Mac/Linux)
 ├── README.md                    You are here
 ├── PLAYBOOK.md                  The full 1500-line engineering playbook (deep dive)
 ├── termux/                      Files that install ON THE PHONE (Termux side)
@@ -115,7 +170,7 @@ phone-healthcheck
 ├── vm/                          Files that install INSIDE THE VM
 │   ├── docker-daemon.json       /etc/docker/daemon.json — tuned for TCG
 │   └── zramswap.default         /etc/default/zramswap — ZRAM swap config
-├── mac/                         Mac/Linux helper scripts (~/.local/bin/)
+├── mac/                         Mac/Linux helper scripts (installed by setup-computer.sh)
 │   ├── phone-healthcheck        End-to-end verification with exit code
 │   ├── phone-status             Human-readable current state
 │   ├── phone-vm-start           Start the VM (with optional --wait)
