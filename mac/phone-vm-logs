@@ -1,0 +1,14 @@
+#!/bin/bash
+# phone-vm-logs — show last N lines of VM serial boot log
+# Usage: phone-vm-logs [N]    (default N=50)
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+LINES="${1:-50}"
+[[ "$LINES" =~ ^[0-9]+$ ]] || { echo "Usage: phone-vm-logs [N]  (N = number of lines, default 50)" >&2; exit 2; }
+
+exec ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "u0_a892@$PHONE_IP" "tail -n $LINES ~/qemu-vm/debian-boot.log"

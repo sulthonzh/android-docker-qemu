@@ -1,0 +1,61 @@
+#!/bin/bash
+# phone-vm-stop — graceful ACPI shutdown of the phone VM via QEMU monitor
+# Usage: phone-vm-stop [--force]
+#   --force   kill -9 QEMU instead of graceful ACPI shutdown (data loss risk)
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+VM_PORT="${VM_PORT:-2222}"
+
+FORCE=false
+[[ "${1:-}" == "--force" ]] && FORCE=true
+
+TERMUX_SSH=(ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "u0_a892@$PHONE_IP")
+
+QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+if [[ -z "$QEMU_PID" || "$QEMU_PID" -le 0 ]]; then
+  echo "QEMU not running"
+  exit 0
+fi
+
+if [[ "$FORCE" == "true" ]]; then
+  echo "Force-killing QEMU PID $QEMU_PID (data loss risk)..."
+  ("${TERMUX_SSH[@]}" "pkill -9 -f qemu-system-aarch64" 2>/dev/null) || true
+  sleep 3
+  echo "Done."
+  exit 0
+fi
+
+# Graceful: send system_powerdown to QEMU monitor (ACPI shutdown)
+echo "Sending ACPI powerdown to QEMU monitor (PID $QEMU_PID)..."
+("${TERMUX_SSH[@]}" 'echo system_powerdown | nc -U -q1 -w1 ~/qemu-vm/mon.sock 2>/dev/null' 2>/dev/null) || true
+
+# Wait for VM SSH to close (indicates VM is shutting down)
+echo "Waiting for VM to shut down..."
+START=$SECONDS
+while nc -z -w 2 "$PHONE_IP" "$VM_PORT" 2>/dev/null; do
+  if [[ $((SECONDS - START)) -gt 180 ]]; then
+    echo "VM still responding after 180s, escalate with --force" >&2
+    exit 1
+  fi
+  sleep 5
+done
+
+# Wait for QEMU process to exit
+while true; do
+  QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+  if [[ -z "$QEMU_PID" || "$QEMU_PID" -le 0 ]]; then
+    break
+  fi
+  if [[ $((SECONDS - START)) -gt 240 ]]; then
+    echo "QEMU still running after 240s total, escalate with --force" >&2
+    exit 1
+  fi
+  sleep 5
+done
+
+ELAPSED=$((SECONDS - START))
+echo "VM shut down cleanly in ${ELAPSED}s"

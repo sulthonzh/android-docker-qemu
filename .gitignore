@@ -1,0 +1,28 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local secrets / env (never commit these)
+.env
+.env.local
+*.pem
+*_rsa
+*_ed25519
+id_*
+known_hosts
+authorized_keys
+
+# QEMU disk images (multi-GB, don't commit)
+*.qcow2
+*.iso
+*.img
+
+# Build artifacts
+*.log

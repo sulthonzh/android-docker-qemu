@@ -1,0 +1,61 @@
+#!/bin/bash
+# phone-vm-start — start QEMU VM on the phone (if not already running)
+# Usage: phone-vm-start [--wait]
+#   --wait     Block until VM SSH (port 2222) is responsive
+#   --timeout  Max seconds to wait (default 1800 = 30 min for cold TCG boot)
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+VM_PORT="${VM_PORT:-2222}"
+
+WAIT=false
+TIMEOUT=1800
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --wait) WAIT=true; shift ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+TERMUX_SSH=(ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "u0_a892@$PHONE_IP")
+
+# Check if already running
+QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+if [[ -n "$QEMU_PID" && "$QEMU_PID" -gt 0 ]]; then
+  echo "QEMU already running (PID $QEMU_PID)"
+else
+  echo "Starting QEMU via Termux..."
+  ("${TERMUX_SSH[@]}" 'setsid bash ~/boot-debian-mon.sh < /dev/null > ~/.qemu-relaunch.log 2>&1 &' 2>/dev/null) || {
+    echo "Failed to invoke boot-debian-mon.sh via Termux SSH" >&2
+    exit 1
+  }
+  sleep 5
+  QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+  if [[ -n "$QEMU_PID" && "$QEMU_PID" -gt 0 ]]; then
+    echo "QEMU started (PID $QEMU_PID)"
+  else
+    echo "QEMU failed to start. Check ~/.qemu-relaunch.log on the phone." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$WAIT" == "true" ]]; then
+  echo "Waiting for VM SSH on $PHONE_IP:$VM_PORT (timeout ${TIMEOUT}s)..."
+  START=$SECONDS
+  while true; do
+    if ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "sulthon@$PHONE_IP" -p "$VM_PORT" 'echo VM_READY' 2>/dev/null | grep -q VM_READY; then
+      ELAPSED=$((SECONDS - START))
+      echo "VM SSH ready after ${ELAPSED}s"
+      exit 0
+    fi
+    if [[ $((SECONDS - START)) -gt $TIMEOUT ]]; then
+      echo "Timed out after ${TIMEOUT}s waiting for VM SSH" >&2
+      exit 1
+    fi
+    sleep 15
+  done
+fi

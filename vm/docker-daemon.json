@@ -1,0 +1,8 @@
+{
+  "_comment": "Docker daemon config tuned for QEMU TCG (software emulation). Installs at /etc/docker/daemon.json inside the VM. See README for why each setting matters.",
+  "max-concurrent-downloads": 1,
+  "max-download-attempts": 5,
+  "dns": ["8.8.8.8", "1.1.1.1"],
+  "ip6tables": false,
+  "ipv6": false
+}

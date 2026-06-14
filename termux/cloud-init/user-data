@@ -1,0 +1,40 @@
+#cloud-config
+# ============================================================================
+# Cloud-init user-data for the Debian 12 VM
+# ----------------------------------------------------------------------------
+# Installs on: the PHONE, built into seed.iso (NoCloud format)
+# Build with:  genisoimage -output seed.iso -volid cidata -joliet -rock user-data meta-data
+#
+# !!! ACTION REQUIRED !!!
+# Replace <YOUR_PUBLIC_KEY_HERE> with YOUR actual SSH public key.
+# Generate one on your computer with:  ssh-keygen -t ed25519 -C "you@computer"
+# Then paste the contents of ~/.ssh/id_ed25519.pub below (the WHOLE line,
+# including "ssh-ed25519 AAAA... comment").
+# Without this, the VM won't accept your SSH key and you'll be locked out.
+# ============================================================================
+
+hostname: docker-phone
+
+users:
+  - name: sulthon
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - <YOUR_PUBLIC_KEY_HERE>
+  - name: root
+    ssh_authorized_keys:
+      - <YOUR_PUBLIC_KEY_HERE>
+
+ssh_pwauth: false
+disable_root: false
+
+package_update: true
+packages:
+  - qemu-guest-agent
+  - ca-certificates
+  - curl
+
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot: false

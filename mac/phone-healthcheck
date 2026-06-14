@@ -1,0 +1,103 @@
+#!/bin/bash
+# phone-healthcheck — full end-to-end verification with exit code
+# Returns 0 if everything passes, non-zero if any check fails.
+# Usage: phone-healthcheck [--wait]
+#   --wait   Wait up to 30 min for VM to come up before running checks
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+VM_PORT="${VM_PORT:-2222}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+WAIT=false
+[[ "${1:-}" == "--wait" ]] && WAIT=true
+
+# Wait for VM SSH
+if [[ "$WAIT" == "true" ]]; then
+  echo "Waiting for VM SSH (max 30 min)..."
+  phone-vm-start --wait --timeout 1800 >/dev/null || true
+fi
+
+PASS=0
+FAIL=0
+check() {
+  local label="$1"
+  local result="$2"
+  if [[ "$result" == "OK" ]]; then
+    printf "  \e[32m✓\e[0m %s\n" "$label"
+    PASS=$((PASS + 1))
+  else
+    printf "  \e[31m✗\e[0m %s (%s)\n" "$label" "$result"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+echo "Phone Server Health Check"
+echo "========================="
+echo ""
+
+# Layer 1: Network
+echo "Network reachability:"
+nc -z -w 3 "$PHONE_IP" "$VM_PORT"     2>/dev/null && check "VM SSH port ($VM_PORT)"        OK || check "VM SSH port ($VM_PORT)"        FAIL
+nc -z -w 3 "$PHONE_IP" "$TERMUX_PORT" 2>/dev/null && check "Termux SSH port ($TERMUX_PORT)" OK || check "Termux SSH port ($TERMUX_PORT)" FAIL
+echo ""
+
+# Layer 2: QEMU
+echo "QEMU process:"
+TERMUX_SSH=(ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -o BatchMode=yes "u0_a892@$PHONE_IP")
+QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+if [[ -n "$QEMU_PID" && "$QEMU_PID" -gt 0 ]]; then
+  check "QEMU running (PID $QEMU_PID)" OK
+else
+  check "QEMU running" FAIL
+fi
+echo ""
+
+# Layer 3: VM-side services
+echo "VM services:"
+if nc -z -w 3 "$PHONE_IP" "$VM_PORT" 2>/dev/null; then
+  VM_SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15 phone-vm)
+
+  HOSTNAME=$(("${VM_SSH[@]}" 'hostname' 2>/dev/null) | tail -1)
+  [[ "$HOSTNAME" == "docker-phone" ]] && check "VM hostname ($HOSTNAME)" OK || check "VM hostname" "${HOSTNAME:-empty}"
+
+  SYSTEMD_OK=$(("${VM_SSH[@]}" 'systemctl is-system-running 2>&1 | head -1' 2>/dev/null) | tail -1)
+  [[ "$SYSTEMD_OK" == "running" || "$SYSTEMD_OK" == "degraded" ]] && check "systemd ($SYSTEMD_OK)" OK || check "systemd" "${SYSTEMD_OK:-unknown}"
+
+  for svc in docker containerd sshd zramswap; do
+    STATE=$(("${VM_SSH[@]}" "systemctl is-active $svc 2>&1" 2>/dev/null) | tail -1)
+    [[ "$STATE" == "active" ]] && check "$svc.service" OK || check "$svc.service" "$STATE"
+  done
+
+  COMPOSE=$(("${VM_SSH[@]}" 'docker compose version --short 2>&1 | head -1' 2>/dev/null) | tail -1)
+  [[ "$COMPOSE" =~ ^2\. ]] && check "docker compose ($COMPOSE)" OK || check "docker compose" "${COMPOSE:-missing}"
+
+  echo ""
+  echo "VM resources:"
+  ZRAM=$(("${VM_SSH[@]}" 'sudo zramctl --noheadings 2>/dev/null | awk "{print \$2,\$3}"' 2>/dev/null) | tail -1)
+  [[ -n "$ZRAM" ]] && check "ZRAM swap ($ZRAM)" OK || check "ZRAM swap" "missing"
+
+  echo ""
+  echo "Functional test (docker run hello-world):"
+  HW=$(("${VM_SSH[@]}" 'docker run --rm hello-world 2>&1 | head -2' 2>/dev/null) | tail -2)
+  if echo "$HW" | grep -q "Hello from Docker"; then
+    check "hello-world container runs" OK
+  else
+    check "hello-world container runs" "FAIL"
+  fi
+else
+  check "VM reachable" "FAIL — cannot run VM-side checks"
+fi
+
+echo ""
+echo "========================="
+echo "Passed: $PASS  Failed: $FAIL"
+if [[ "$FAIL" -eq 0 ]]; then
+  printf "Result: \e[32mALL PASS\e[0m\n"
+  exit 0
+else
+  printf "Result: \e[31m%d CHECK(S) FAILED\e[0m\n" "$FAIL"
+  exit 1
+fi

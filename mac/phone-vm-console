@@ -1,0 +1,40 @@
+#!/bin/bash
+# phone-vm-console — attach to QEMU monitor or read serial log
+# Usage:
+#   phone-vm-console             attach to QEMU monitor (interactive)
+#   phone-vm-console --serial    tail serial log (read-only)
+#   phone-vm-console --log       same as --serial, tail boot log
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+TERMUX_SSH=(ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "u0_a892@$PHONE_IP")
+
+MODE="monitor"
+case "${1:-}" in
+  --serial|--log) MODE="serial" ;;
+  --monitor)      MODE="monitor" ;;
+  "")             ;;
+  *) echo "Usage: phone-vm-console [--monitor|--serial|--log]" >&2; exit 2 ;;
+esac
+
+QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+if [[ -z "$QEMU_PID" || "$QEMU_PID" -le 0 ]]; then
+  echo "QEMU not running" >&2
+  exit 1
+fi
+
+if [[ "$MODE" == "serial" ]]; then
+  echo "Tailing ~/qemu-vm/debian-boot.log (Ctrl-C to exit)..."
+  exec "${TERMUX_SSH[@]}" 'tail -f ~/qemu-vm/debian-boot.log'
+else
+  # Monitor mode: interactive readline on mon.sock
+  echo "Attaching to QEMU monitor at ~/qemu-vm/mon.sock (type 'quit' to exit, Ctrl-D to detach)"
+  echo "Useful commands: info status, info registers, system_powerdown, quit"
+  echo ""
+  # Use nc -U to connect to the unix socket interactively
+  exec "${TERMUX_SSH[@]}" 'nc -U ~/qemu-vm/mon.sock'
+fi

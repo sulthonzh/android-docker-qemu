@@ -1,0 +1,7 @@
+# ZRAM swap config — installs at /etc/default/zramswap inside the VM.
+# Compressed RAM swap. 75% of RAM (6GB → ~4.3GB) as zstd-compressed swap.
+# Crucial because Docker pulls spike memory hard under TCG.
+# Restart after install: sudo systemctl restart zramswap
+ALGO=zstd
+PERCENT=75
+PRIORITY=100

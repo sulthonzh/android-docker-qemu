@@ -1,0 +1,20 @@
+#!/bin/bash
+# phone-vm-restart — graceful restart of the phone VM
+# Usage: phone-vm-restart [--wait]
+#   --wait   Block until VM SSH is responsive after restart
+
+set -u
+
+WAIT=false
+[[ "${1:-}" == "--wait" ]] && WAIT=true
+
+echo "=== Stopping VM ==="
+phone-vm-stop || { echo "Stop failed, aborting" >&2; exit 1; }
+
+echo ""
+echo "=== Starting VM ==="
+if [[ "$WAIT" == "true" ]]; then
+  phone-vm-start --wait --timeout 1800
+else
+  phone-vm-start
+fi

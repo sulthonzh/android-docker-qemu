@@ -1,0 +1,21 @@
+# Example compose stack — the smallest possible test that exercises
+# pull, run, networking, and port forwarding.
+#
+# Run from YOUR COMPUTER:
+#   docker --context phone compose -f docker-compose.example.yml up -d
+#
+# Then open: http://localhost:8080  (forwarded to the phone's port 8080,
+# which QEMU forwards into the VM's port 80).
+#
+# Visiting the URL should show a page like:
+#   Hostname: whoami-xxxx
+#   IP: 10.0.2.15
+#   Remote: ...
+#
+# This confirms end-to-end:  Mac → phone SSH → QEMU → Docker → container.
+
+services:
+  whoami:
+    image: traefik/whoami
+    ports:
+      - "80:80"

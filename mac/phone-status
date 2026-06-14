@@ -1,0 +1,117 @@
+#!/bin/bash
+# phone-status — show health of phone VM + Docker + Termux
+# Usage: phone-status
+
+set -u
+
+PHONE_IP="${PHONE_IP:-192.168.0.9}"
+VM_PORT="${VM_PORT:-2222}"
+TERMUX_PORT="${TERMUX_PORT:-8022}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+# Colors
+GREEN=$'\e[32m'
+RED=$'\e[31m'
+YELLOW=$'\e[33m'
+DIM=$'\e[2m'
+RESET=$'\e[0m'
+
+ok()   { printf "%s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
+fail() { printf "%s✗%s %s\n" "$RED" "$RESET" "$1"; }
+warn() { printf "%s!%s %s\n" "$YELLOW" "$RESET" "$1"; }
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Phone Server Status  ($PHONE_IP)"
+echo "═══════════════════════════════════════════════════════════════"
+
+# Port reachability
+if nc -z -w 3 "$PHONE_IP" "$VM_PORT" 2>/dev/null; then
+  ok "VM SSH port $VM_PORT: open"
+else
+  fail "VM SSH port $VM_PORT: closed"
+fi
+
+if nc -z -w 3 "$PHONE_IP" "$TERMUX_PORT" 2>/dev/null; then
+  ok "Termux SSH port $TERMUX_PORT: open"
+else
+  warn "Termux SSH port $TERMUX_PORT: closed (sshd may not be running)"
+fi
+
+# Termux-side QEMU state
+echo ""
+echo "${DIM}── Termux-side ──${RESET}"
+TERMUX_SSH=(ssh -p "$TERMUX_PORT" -i "$SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -o BatchMode=yes "u0_a892@$PHONE_IP")
+
+QEMU_PID=$(("${TERMUX_SSH[@]}" 'pgrep -x qemu-system-aarch64 | head -1' 2>/dev/null) | tr -dc '[:digit:]')
+if [[ -n "$QEMU_PID" && "$QEMU_PID" -gt 0 ]]; then
+  QEMU_UPTIME=$(("${TERMUX_SSH[@]}" "ps -o etime= -p $QEMU_PID" 2>/dev/null) | tr -d ' ')
+  ok "QEMU PID $QEMU_PID (uptime $QEMU_UPTIME)"
+else
+  fail "QEMU not running (run: phone-vm-start)"
+fi
+
+# VM-side state
+echo ""
+echo "${DIM}── VM-side (Debian docker-phone) ──${RESET}"
+
+if ! nc -z -w 3 "$PHONE_IP" "$VM_PORT" 2>/dev/null; then
+  fail "VM not reachable (wait ~20-30 min for TCG boot after phone-vm-start)"
+  echo ""
+  exit 0
+fi
+
+# Remote script — kept simple to avoid quoting hell
+REMOTE_SCRIPT=$(cat <<'REMOTE'
+echo "HOSTNAME||$(hostname)"
+echo "UPTIME||$(uptime | sed 's/.*up/up/')"
+echo "DOCKER||$(systemctl is-active docker 2>&1)"
+echo "CONTAINERD||$(systemctl is-active containerd 2>&1)"
+echo "ZRAM||$(systemctl is-active zramswap 2>&1)"
+echo "COMPOSE||$(docker compose version --short 2>&1 | head -1)"
+echo "CONTAINERS||$(docker ps -q 2>/dev/null | wc -l | tr -d ' ')"
+echo "IMAGES||$(docker images -q 2>/dev/null | wc -l | tr -d ' ')"
+echo "DISK_USED||$(df -h / | tail -1 | awk '{print $3}')"
+echo "DISK_TOTAL||$(df -h / | tail -1 | awk '{print $2}')"
+echo "MEM_USED||$(free -h | awk '/^Mem:/ {print $3}')"
+echo "MEM_TOTAL||$(free -h | awk '/^Mem:/ {print $2}')"
+REMOTE
+)
+
+VM_OUT=$(ssh -o BatchMode=yes -o ConnectTimeout=15 phone-vm "$REMOTE_SCRIPT" 2>/dev/null)
+
+if [[ -z "$VM_OUT" ]]; then
+  fail "VM SSH connected but no output (sshd still starting under TCG?)"
+  echo ""
+  exit 0
+fi
+
+# Parse ||-delimited output into plain variables (bash 3.2 compatible, no assoc arrays)
+while IFS= read -r line; do
+  key="${line%%||*}"
+  val="${line#*||}"
+  case "$key" in
+    HOSTNAME)    V_HOSTNAME="$val" ;;
+    UPTIME)      V_UPTIME="$val" ;;
+    DOCKER)      V_DOCKER="$val" ;;
+    CONTAINERD)  V_CONTAINERD="$val" ;;
+    ZRAM)        V_ZRAM="$val" ;;
+    COMPOSE)     V_COMPOSE="$val" ;;
+    CONTAINERS)  V_CONTAINERS="$val" ;;
+    IMAGES)      V_IMAGES="$val" ;;
+    DISK_USED)   V_DISK_USED="$val" ;;
+    DISK_TOTAL)  V_DISK_TOTAL="$val" ;;
+    MEM_USED)    V_MEM_USED="$val" ;;
+    MEM_TOTAL)   V_MEM_TOTAL="$val" ;;
+  esac
+done <<< "$VM_OUT"
+
+ok "VM hostname: ${V_HOSTNAME:-unknown}"
+ok "VM uptime: ${V_UPTIME:-unknown}"
+[[ "${V_DOCKER:-}" == "active" ]]        && ok "docker.service: active"        || fail "docker.service: ${V_DOCKER:-unknown}"
+[[ "${V_CONTAINERD:-}" == "active" ]]    && ok "containerd.service: active"    || fail "containerd.service: ${V_CONTAINERD:-unknown}"
+[[ "${V_ZRAM:-}" == "active" ]]          && ok "zramswap.service: active"      || warn "zramswap.service: ${V_ZRAM:-unknown}"
+[[ -n "${V_COMPOSE:-}" ]]                && ok "docker compose: ${V_COMPOSE}" || warn "docker compose: not available"
+ok "containers running: ${V_CONTAINERS:-0}, images: ${V_IMAGES:-0}"
+ok "disk: ${V_DISK_USED:-?} / ${V_DISK_TOTAL:-?}, mem: ${V_MEM_USED:-?} / ${V_MEM_TOTAL:-?}"
+
+echo ""
