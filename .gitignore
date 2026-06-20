@@ -26,3 +26,9 @@ authorized_keys
 
 # Build artifacts
 *.log
+
+# Python
+__pycache__/
+.venv/
+*.egg-info/
+.mypy_cache/
