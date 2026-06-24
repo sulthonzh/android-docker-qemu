@@ -32,3 +32,6 @@ __pycache__/
 .venv/
 *.egg-info/
 .mypy_cache/
+node_modules/
+dist/
+build/
